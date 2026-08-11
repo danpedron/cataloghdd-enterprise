@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    install -d -m 755 /etc/cataloghdd
+    if [ -f /etc/cataloghdd/client.conf ]; then
+        chown root:root /etc/cataloghdd/client.conf
+        chmod 600 /etc/cataloghdd/client.conf
+    fi
+fi
+
+exit 0

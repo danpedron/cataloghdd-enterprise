@@ -1,0 +1,26 @@
+# Configuração privada e segredos
+config/catalog.env
+*.env
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Dados operacionais
+thumbnails/
+data/
+backups/
+logs/
+*.sql.gz
+
+# Artefatos de pacote e Python
+*.deb
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Ambiente local
+.DS_Store
+.idea/
+.vscode/

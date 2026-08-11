@@ -1,0 +1,10 @@
+Package: cataloghdd-client
+Version: 1.3.0
+Section: utils
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.9), util-linux, mount, coreutils, ca-certificates, python3-pil, ffmpeg, btrfs-progs, p7zip-full | 7zip
+Maintainer: CatalogHDD Enterprise <admin@localhost>
+Description: Cliente Debian do CatalogHDD Enterprise
+ Detecta discos e suas partições, monta partições elegíveis em modo somente
+ leitura e envia o inventário para o CatalogHDD Enterprise por HTTPS.
