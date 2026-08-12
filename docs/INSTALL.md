@@ -73,8 +73,8 @@ Monte e instale o pacote Debian em um computador que terá acesso físico aos di
 
 ```bash
 cd client
-dpkg-deb --build --root-owner-group package cataloghdd-client_1.4.0_all.deb
-sudo apt install ./cataloghdd-client_1.4.0_all.deb
+dpkg-deb --build --root-owner-group package cataloghdd-client_1.4.1_all.deb
+sudo apt install ./cataloghdd-client_1.4.1_all.deb
 ```
 
 No painel, crie um token para o cliente. Então configure e execute uma inspeção antes de indexar:

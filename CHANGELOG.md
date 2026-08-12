@@ -2,6 +2,10 @@
 
 Todas as alterações relevantes deste projeto são registradas neste arquivo.
 
+## 1.4.1 — 2026-08-12
+
+- Corrigida a geração de miniaturas para PNG/GIF em paleta com transparência, eliminando avisos do Pillow sem descartar o canal alfa antes da composição em JPEG.
+
 ## 1.4.0 — 2026-08-12
 
 - Redesenhada a consulta de conteúdo do volume como explorador hierárquico, com breadcrumbs, navegação para pasta-pai e pastas antes dos arquivos.

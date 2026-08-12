@@ -33,7 +33,7 @@ from urllib.request import Request, urlopen
 from archives import ArchiveError, ArchiveLimitReached, ArchiveUnsupported, archive_format, is_archive, list_entries
 
 CONFIG_PATH = Path('/etc/cataloghdd/client.conf')
-CLIENT_VERSION = '1.4.0'
+CLIENT_VERSION = '1.4.1'
 USER_AGENT = 'CatalogHDD-Debian-Client/' + CLIENT_VERSION
 SUPPORTED_SKIP_FILESYSTEMS = {'swap', 'crypto_luks', 'lvm2_member', 'linux_raid_member'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic'}
@@ -371,14 +371,28 @@ def image_info(path: Path) -> dict[str, Any]:
         return {}
 
 
+def image_for_jpeg(image: Any) -> Any:
+    """Normaliza transparência e modos do Pillow antes de gravar um JPEG."""
+    if image.mode == 'P' and image.info.get('transparency') is not None:
+        # Evita o aviso do Pillow para tabelas de transparência em bytes e preserva alpha.
+        image = image.convert('RGBA')
+    if ImageOps is not None:
+        image = ImageOps.exif_transpose(image)
+    if image.mode in ('RGBA', 'LA'):
+        rgba = image.convert('RGBA')
+        background = Image.new('RGB', rgba.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.getchannel('A'))
+        return background
+    if image.mode not in ('RGB', 'L'):
+        return image.convert('RGB')
+    return image
+
+
 def make_thumbnail(path: Path, kind: str, destination: Path, max_px: int = 256, quality: int = 70) -> bool:
     try:
         if kind == 'image' and Image is not None:
             with Image.open(path) as image:
-                if ImageOps is not None:
-                    image = ImageOps.exif_transpose(image)
-                if image.mode not in ('RGB', 'L'):
-                    image = image.convert('RGB')
+                image = image_for_jpeg(image)
                 image.thumbnail((max_px, max_px))
                 image.save(destination, 'JPEG', quality=quality, optimize=True)
             return True
