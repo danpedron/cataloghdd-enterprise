@@ -158,14 +158,64 @@ function apiRunForUser(array $user, int $runId): array
     $stmt=db()->prepare('SELECT r.*,d.id AS disk_id FROM index_runs r INNER JOIN disks d ON d.id=r.disk_id WHERE r.id=:id AND r.status=\'running\' LIMIT 1');$stmt->execute([':id'=>$runId]);$run=$stmt->fetch();if(!$run)apiJson(404,['error'=>'Execução ativa não encontrada.']);if(!apiCanManageDisk($user,(int)$run['disk_id']))apiJson(403,['error'=>'Sem permissão para esta execução.']);return $run;
 }
 
+function apiBrowserSegments(string $path): array
+{
+    $segments = [];
+    foreach (explode('/', trim($path, '/')) as $segment) {
+        if ($segment !== '' && $segment !== '.' && $segment !== '..') $segments[] = $segment;
+    }
+    return $segments;
+}
+
+function apiSyncBrowserEntries(PDOStatement $directoryStmt, PDOStatement $fileEntryStmt, int $diskId, ?int $partitionId, int $fileId, string $path, array &$seenDirectories): void
+{
+    $segments = apiBrowserSegments($path);
+    if ($segments === []) return;
+    $parentPath = '/'; $last = count($segments) - 1;
+    for ($index = 0; $index < $last; $index++) {
+        $parentHash = hash('sha256', $parentPath); $cacheKey = ($partitionId ?? 0) . ':' . $parentHash . ':' . $segments[$index];
+        if (!isset($seenDirectories[$cacheKey])) {
+            $directoryStmt->execute([':disk_id'=>$diskId, ':partition_id'=>$partitionId, ':parent_hash'=>$parentHash, ':name'=>$segments[$index]]);
+            $seenDirectories[$cacheKey] = true;
+        }
+        $parentPath = rtrim($parentPath, '/') . '/' . $segments[$index];
+    }
+    $fileEntryStmt->execute([':disk_id'=>$diskId, ':partition_id'=>$partitionId, ':parent_hash'=>hash('sha256', $parentPath), ':name'=>$segments[$last], ':file_id'=>$fileId]);
+}
+
 function apiBatch(): never
 {
-    $user=apiUser();$data=apiBody();$runId=(int)($data['run_id']??0);$records=$data['files']??null;if($runId<1||!is_array($records)||count($records)<1||count($records)>200)apiJson(422,['error'=>'Envie entre 1 e 200 registros por lote.']);$run=apiRunForUser($user,$runId);$pdo=db();$pdo->beginTransaction();$accepted=0;
-    $sql='INSERT INTO files (disk_id,partition_id,path,path_hash,name,size,modified,extension,mime_type,file_type,thumbnail_key,metadata_json,indexed_at,last_seen_at,is_deleted) VALUES (:disk_id,:partition_id,:path,:path_hash,:name,:size,:modified,:extension,:mime_type,:file_type,:thumbnail_key,:metadata_json,NOW(),NOW(),0) ON DUPLICATE KEY UPDATE partition_id=VALUES(partition_id),name=VALUES(name),size=VALUES(size),modified=VALUES(modified),extension=VALUES(extension),mime_type=VALUES(mime_type),file_type=VALUES(file_type),thumbnail_key=COALESCE(VALUES(thumbnail_key),thumbnail_key),metadata_json=VALUES(metadata_json),indexed_at=NOW(),last_seen_at=NOW(),is_deleted=0';$stmt=$pdo->prepare($sql);
+    $user = apiUser(); $data = apiBody(); $runId = (int)($data['run_id'] ?? 0); $records = $data['files'] ?? null;
+    if ($runId < 1 || !is_array($records) || count($records) < 1 || count($records) > 200) apiJson(422, ['error'=>'Envie entre 1 e 200 registros por lote.']);
+    $run = apiRunForUser($user, $runId); $pdo = db(); $pdo->beginTransaction(); $accepted = 0;
+    $fileStmt = $pdo->prepare('INSERT INTO files (disk_id,partition_id,path,path_hash,name,size,modified,extension,mime_type,file_type,thumbnail_key,metadata_json,indexed_at,last_seen_at,is_deleted) VALUES (:disk_id,:partition_id,:path,:path_hash,:name,:size,:modified,:extension,:mime_type,:file_type,:thumbnail_key,:metadata_json,NOW(),NOW(),0) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),partition_id=VALUES(partition_id),name=VALUES(name),size=VALUES(size),modified=VALUES(modified),extension=VALUES(extension),mime_type=VALUES(mime_type),file_type=VALUES(file_type),thumbnail_key=COALESCE(VALUES(thumbnail_key),thumbnail_key),metadata_json=VALUES(metadata_json),indexed_at=NOW(),last_seen_at=NOW(),is_deleted=0');
+    $directoryStmt = $pdo->prepare('INSERT INTO file_browser_entries (disk_id,partition_id,parent_hash,name,is_directory,last_seen_at,is_deleted) VALUES (:disk_id,:partition_id,:parent_hash,:name,1,NOW(),0) ON DUPLICATE KEY UPDATE partition_id=VALUES(partition_id),last_seen_at=NOW(),is_deleted=0');
+    $fileEntryStmt = $pdo->prepare('INSERT INTO file_browser_entries (disk_id,partition_id,parent_hash,name,is_directory,file_id,last_seen_at,is_deleted) VALUES (:disk_id,:partition_id,:parent_hash,:name,0,:file_id,NOW(),0) ON DUPLICATE KEY UPDATE partition_id=VALUES(partition_id),file_id=VALUES(file_id),last_seen_at=NOW(),is_deleted=0');
     $partitionLookup = $pdo->prepare('SELECT id FROM disk_partitions WHERE disk_id=:disk_id AND partition_number=:number LIMIT 1');
-    try {foreach($records as $record){if(!is_array($record))continue;$partitionNumber=isset($record['partition_number'])&&is_numeric($record['partition_number'])?(int)$record['partition_number']:null;$partitionId=null;if($partitionNumber!==null&&$partitionNumber>=0){$partitionLookup->execute([':disk_id'=>$run['disk_id'],':number'=>$partitionNumber]);$partitionId=$partitionLookup->fetchColumn()?:null;}$path=apiCleanString($record['path']??null,65000);$name=apiCleanString($record['name']??null,255);if($path===null||$name===null)continue;$hash=hash('sha256',$path);$extension=strtolower((string)(apiCleanString($record['extension']??null,32)??''));$mime=apiCleanString($record['mime_type']??null,255);$type=apiCleanString($record['file_type']??null,32)??'file';$size=isset($record['size'])&&is_numeric($record['size'])?max(0,(int)$record['size']):0;$modified=apiCleanString($record['modified']??null,19);$thumbnail=isset($record['thumbnail_key'])&&preg_match('/^[a-f0-9]{64}$/',(string)$record['thumbnail_key'])?(string)$record['thumbnail_key']:null;$metadata=$record['metadata']??[];if(!is_array($metadata))$metadata=[];$stmt->execute([':disk_id'=>$run['disk_id'],':partition_id'=>$partitionId,':path'=>$path,':path_hash'=>$hash,':name'=>$name,':size'=>$size,':modified'=>$modified,':extension'=>$extension?:null,':mime_type'=>$mime,':file_type'=>$type,':thumbnail_key'=>$thumbnail,':metadata_json'=>json_encode($metadata,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);$accepted++;}
-        $pdo->prepare('UPDATE index_runs SET files_discovered=files_discovered+:discovered,files_indexed=files_indexed+:indexed WHERE id=:id')->execute([':discovered'=>$accepted,':indexed'=>$accepted,':id'=>$runId]);$pdo->commit();apiJson(200,['accepted'=>$accepted]);
-    }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();error_log('CatalogHDD api batch: '.$e->getMessage());apiJson(500,['error'=>'Não foi possível gravar o lote.']);}
+    $seenDirectories = [];
+    try {
+        foreach ($records as $record) {
+            if (!is_array($record)) continue;
+            $partitionNumber = isset($record['partition_number']) && is_numeric($record['partition_number']) ? (int)$record['partition_number'] : null;
+            $partitionId = null;
+            if ($partitionNumber !== null && $partitionNumber >= 0) { $partitionLookup->execute([':disk_id'=>$run['disk_id'], ':number'=>$partitionNumber]); $found = $partitionLookup->fetchColumn(); $partitionId = $found === false ? null : (int)$found; }
+            $path = apiCleanString($record['path'] ?? null, 65000); $name = apiCleanString($record['name'] ?? null, 255);
+            if ($path === null || $name === null) continue;
+            $hash = hash('sha256', $path); $extension = strtolower((string)(apiCleanString($record['extension'] ?? null, 32) ?? ''));
+            $mime = apiCleanString($record['mime_type'] ?? null, 255); $type = apiCleanString($record['file_type'] ?? null, 32) ?? 'file';
+            $size = isset($record['size']) && is_numeric($record['size']) ? max(0, (int)$record['size']) : 0; $modified = apiCleanString($record['modified'] ?? null, 19);
+            $thumbnail = isset($record['thumbnail_key']) && preg_match('/^[a-f0-9]{64}$/', (string)$record['thumbnail_key']) ? (string)$record['thumbnail_key'] : null;
+            $metadata = $record['metadata'] ?? []; if (!is_array($metadata)) $metadata = [];
+            $fileStmt->execute([':disk_id'=>$run['disk_id'], ':partition_id'=>$partitionId, ':path'=>$path, ':path_hash'=>$hash, ':name'=>$name, ':size'=>$size, ':modified'=>$modified, ':extension'=>$extension ?: null, ':mime_type'=>$mime, ':file_type'=>$type, ':thumbnail_key'=>$thumbnail, ':metadata_json'=>json_encode($metadata, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);
+            $fileId = (int)$pdo->lastInsertId();
+            apiSyncBrowserEntries($directoryStmt, $fileEntryStmt, (int)$run['disk_id'], $partitionId, $fileId, $path, $seenDirectories);
+            $accepted++;
+        }
+        $pdo->prepare('UPDATE index_runs SET files_discovered=files_discovered+:discovered,files_indexed=files_indexed+:indexed WHERE id=:id')->execute([':discovered'=>$accepted, ':indexed'=>$accepted, ':id'=>$runId]);
+        $pdo->commit(); apiJson(200, ['accepted'=>$accepted]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack(); error_log('CatalogHDD api batch: ' . $e->getMessage()); apiJson(500, ['error'=>'Não foi possível gravar o lote.']);
+    }
 }
 
 function apiArchiveScanForUser(array $user, int $runId, int $scanId): array
@@ -227,6 +277,8 @@ function apiFinish(): never
     $status = $errors > 0 ? 'completed_with_errors' : 'completed'; $pdo = db(); $pdo->beginTransaction();
     try {
         $pdo->prepare('UPDATE files SET is_deleted=1 WHERE disk_id=:disk_id AND last_seen_at IS NOT NULL AND last_seen_at < :started_at')
+            ->execute([':disk_id'=>$run['disk_id'], ':started_at'=>$run['started_at']]);
+        $pdo->prepare('UPDATE file_browser_entries SET is_deleted=1 WHERE disk_id=:disk_id AND last_seen_at IS NOT NULL AND last_seen_at < :started_at')
             ->execute([':disk_id'=>$run['disk_id'], ':started_at'=>$run['started_at']]);
         $partStmt = $pdo->prepare('UPDATE disk_partitions SET status=:status,last_indexed_at=CASE WHEN :indexed=1 THEN NOW() ELSE last_indexed_at END,last_seen_at=NOW(),used_bytes=COALESCE(:used_bytes,used_bytes),free_bytes=COALESCE(:free_bytes,free_bytes),usage_updated_at=CASE WHEN :has_usage=1 THEN NOW() ELSE usage_updated_at END WHERE disk_id=:disk_id AND partition_number=:number');
         foreach ($partitionStates as $part) {

@@ -300,30 +300,9 @@ function explorerLabel(string $segment): string
 
 function explorerEntries(int $diskId, string $path): array
 {
-    $prefix = '/' . ($path === '' ? '' : $path . '/');
-    $pattern = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $prefix) . '%';
-    $offset = strlen($prefix) + 1;
-    $sql = "SELECT SUBSTRING_INDEX(remainder, '/', 1) AS entry_name,
-                   MAX(CASE WHEN LOCATE('/', remainder) > 0 THEN 1 ELSE 0 END) AS is_directory,
-                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN id ELSE NULL END) AS file_id,
-                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN size ELSE NULL END) AS size,
-                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN modified ELSE NULL END) AS modified,
-                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN extension ELSE NULL END) AS extension,
-                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN mime_type ELSE NULL END) AS mime_type,
-                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN file_type ELSE NULL END) AS file_type,
-                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN thumbnail_key ELSE NULL END) AS thumbnail_key,
-                   COUNT(*) AS item_count
-            FROM (
-                SELECT f.id,f.size,f.modified,f.extension,f.mime_type,f.file_type,f.thumbnail_key,SUBSTRING(f.path, {$offset}) AS remainder
-                FROM files f
-                WHERE f.disk_id=:disk_id AND f.is_deleted=0 AND f.path LIKE :path_prefix ESCAPE '\\\\'
-            ) AS descendants
-            WHERE remainder <> ''
-            GROUP BY entry_name
-            ORDER BY is_directory DESC, entry_name ASC
-            LIMIT 750";
-    $stmt = db()->prepare($sql);
-    $stmt->execute([':disk_id'=>$diskId, ':path_prefix'=>$pattern]);
+    $parentPath = $path === '' ? '/' : '/' . $path;
+    $stmt = db()->prepare('SELECT e.name AS entry_name,e.is_directory,e.file_id,COALESCE(f.size,0) AS size,f.modified,f.extension,f.mime_type,f.file_type,f.thumbnail_key,0 AS item_count FROM file_browser_entries e LEFT JOIN files f ON f.id=e.file_id AND f.is_deleted=0 WHERE e.disk_id=:disk_id AND e.parent_hash=:parent_hash AND e.is_deleted=0 AND (e.is_directory=1 OR f.id IS NOT NULL) ORDER BY e.is_directory DESC,e.name ASC LIMIT 750');
+    $stmt->execute([':disk_id'=>$diskId, ':parent_hash'=>hash('sha256', $parentPath)]);
     return $stmt->fetchAll();
 }
 
@@ -364,7 +343,7 @@ function explorerTable(array $entries, int $diskId, string $path): string
         if ($directory) {
             $icon = '<span class="explorer-icon folder" aria-hidden="true"></span>';
             $nameCell = '<a class="explorer-name" href="' . h(url('disk', ['id'=>$diskId,'path'=>$childPath])) . '">' . h(explorerLabel($name)) . '</a>';
-            $type = 'Pasta'; $size = number_format((int)$entry['item_count'], 0, ',', '.') . ' itens'; $modified = '—';
+            $type = 'Pasta'; $size = '—'; $modified = '—';
         } else {
             $thumb = !empty($entry['thumbnail_key']) ? '<img class="explorer-thumb" src="' . h(url('thumbnail', ['id'=>(int)$entry['file_id']])) . '" alt="">' : '<span class="explorer-icon file">' . fileIcon($entry['mime_type'], $entry['extension']) . '</span>';
             $icon = $thumb; $nameCell = '<span class="explorer-name">' . h($name) . '</span>';
