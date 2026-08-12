@@ -220,5 +220,27 @@ function apiThumbnail(): never
 
 function apiFinish(): never
 {
-    $user=apiUser();$data=apiBody();$runId=(int)($data['run_id']??0);$run=apiRunForUser($user,$runId);$errors=isset($data['errors_count'])&&is_numeric($data['errors_count'])?max(0,(int)$data['errors_count']):0;$summary=apiCleanString($data['error_summary']??null,65000);$partitionStates=isset($data['partitions'])&&is_array($data['partitions'])?$data['partitions']:[];$status=$errors>0?'completed_with_errors':'completed';$pdo=db();$pdo->beginTransaction();try{$pdo->prepare('UPDATE files SET is_deleted=1 WHERE disk_id=:disk_id AND last_seen_at IS NOT NULL AND last_seen_at < :started_at')->execute([':disk_id'=>$run['disk_id'],':started_at'=>$run['started_at']]);$partStmt=$pdo->prepare('UPDATE disk_partitions SET status=:status,last_indexed_at=CASE WHEN :indexed=1 THEN NOW() ELSE last_indexed_at END,last_seen_at=NOW() WHERE disk_id=:disk_id AND partition_number=:number');foreach($partitionStates as $part){if(!is_array($part)||!isset($part['number'])||!is_numeric($part['number']))continue;$partStatus=apiCleanString($part['status']??null,32)??'unmounted';if(!in_array($partStatus,['indexed','mounted','unmounted','unsupported','encrypted','error','empty'],true))$partStatus='error';$partStmt->execute([':status'=>$partStatus,':indexed'=>$partStatus==='indexed'?1:0,':disk_id'=>$run['disk_id'],':number'=>(int)$part['number']]);}$pdo->prepare('UPDATE index_runs SET status=:status,errors_count=:errors,error_summary=:summary,finished_at=NOW() WHERE id=:id')->execute([':status'=>$status,':errors'=>$errors,':summary'=>$summary,':id'=>$runId]);$pdo->prepare('UPDATE disks SET last_indexed_at=NOW(),last_seen_at=NOW() WHERE id=:id')->execute([':id'=>$run['disk_id']]);$pdo->commit();apiAudit($user,'index.run.finished','disk',$run['disk_id'],['run_id'=>$runId,'status'=>$status,'errors'=>$errors]);apiJson(200,['status'=>$status]);}catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();error_log('CatalogHDD api finish: '.$e->getMessage());apiJson(500,['error'=>'Não foi possível finalizar a indexação.']);}
+    $user = apiUser(); $data = apiBody(); $runId = (int)($data['run_id'] ?? 0); $run = apiRunForUser($user, $runId);
+    $errors = isset($data['errors_count']) && is_numeric($data['errors_count']) ? max(0, (int)$data['errors_count']) : 0;
+    $summary = apiCleanString($data['error_summary'] ?? null, 65000);
+    $partitionStates = isset($data['partitions']) && is_array($data['partitions']) ? $data['partitions'] : [];
+    $status = $errors > 0 ? 'completed_with_errors' : 'completed'; $pdo = db(); $pdo->beginTransaction();
+    try {
+        $pdo->prepare('UPDATE files SET is_deleted=1 WHERE disk_id=:disk_id AND last_seen_at IS NOT NULL AND last_seen_at < :started_at')
+            ->execute([':disk_id'=>$run['disk_id'], ':started_at'=>$run['started_at']]);
+        $partStmt = $pdo->prepare('UPDATE disk_partitions SET status=:status,last_indexed_at=CASE WHEN :indexed=1 THEN NOW() ELSE last_indexed_at END,last_seen_at=NOW(),used_bytes=COALESCE(:used_bytes,used_bytes),free_bytes=COALESCE(:free_bytes,free_bytes),usage_updated_at=CASE WHEN :has_usage=1 THEN NOW() ELSE usage_updated_at END WHERE disk_id=:disk_id AND partition_number=:number');
+        foreach ($partitionStates as $part) {
+            if (!is_array($part) || !isset($part['number']) || !is_numeric($part['number'])) continue;
+            $partStatus = apiCleanString($part['status'] ?? null, 32) ?? 'unmounted';
+            if (!in_array($partStatus, ['indexed','mounted','unmounted','unsupported','encrypted','error','empty'], true)) $partStatus = 'error';
+            $used = isset($part['used_bytes']) && is_numeric($part['used_bytes']) ? max(0, (int)$part['used_bytes']) : null;
+            $free = isset($part['free_bytes']) && is_numeric($part['free_bytes']) ? max(0, (int)$part['free_bytes']) : null;
+            $partStmt->execute([':status'=>$partStatus, ':indexed'=>$partStatus==='indexed'?1:0, ':used_bytes'=>$used, ':free_bytes'=>$free, ':has_usage'=>($used !== null && $free !== null)?1:0, ':disk_id'=>$run['disk_id'], ':number'=>(int)$part['number']]);
+        }
+        $pdo->prepare('UPDATE index_runs SET status=:status,errors_count=:errors,error_summary=:summary,finished_at=NOW() WHERE id=:id')->execute([':status'=>$status, ':errors'=>$errors, ':summary'=>$summary, ':id'=>$runId]);
+        $pdo->prepare('UPDATE disks SET last_indexed_at=NOW(),last_seen_at=NOW() WHERE id=:id')->execute([':id'=>$run['disk_id']]);
+        $pdo->commit(); apiAudit($user, 'index.run.finished', 'disk', $run['disk_id'], ['run_id'=>$runId, 'status'=>$status, 'errors'=>$errors]); apiJson(200, ['status'=>$status]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack(); error_log('CatalogHDD api finish: ' . $e->getMessage()); apiJson(500, ['error'=>'Não foi possível finalizar a indexação.']);
+    }
 }

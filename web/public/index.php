@@ -177,15 +177,22 @@ function diskPage(): never
     $partitionStmt = db()->prepare('SELECT p.*, COUNT(f.id) AS file_count, r.source_host AS run_source_host, r.client_version AS run_client_version, r.finished_at AS run_finished_at FROM disk_partitions p LEFT JOIN files f ON f.partition_id=p.id AND f.is_deleted=0 LEFT JOIN index_runs r ON r.id=p.last_run_id WHERE p.disk_id=:disk_id GROUP BY p.id ORDER BY p.partition_number');
     $partitionStmt->execute([':disk_id' => $id]);
     $partitions = $partitionStmt->fetchAll();
+    $usageStmt = db()->prepare('SELECT COUNT(*) AS partitions_with_usage,COALESCE(SUM(used_bytes),0) AS used_bytes,COALESCE(SUM(free_bytes),0) AS free_bytes,MAX(usage_updated_at) AS usage_updated_at FROM disk_partitions WHERE disk_id=:disk_id AND used_bytes IS NOT NULL AND free_bytes IS NOT NULL');
+    $usageStmt->execute([':disk_id'=>$id]); $usage = $usageStmt->fetch() ?: ['partitions_with_usage'=>0,'used_bytes'=>0,'free_bytes'=>0,'usage_updated_at'=>null];
     $query = trim((string) ($_GET['q'] ?? ''));
-    $page = pageNumber(); $paging = pagination((int) $disk['file_count'], $page);
-    $where = 'f.disk_id=:id AND f.is_deleted=0'; $params = [':id' => $id];
-    if ($query !== '') { $where .= ' AND (f.name LIKE :query ESCAPE "\\\\" OR f.path LIKE :query ESCAPE "\\\\")'; $params[':query'] = sqlLike($query); }
-    $totalStmt = db()->prepare("SELECT COUNT(*) FROM files f WHERE {$where}"); $totalStmt->execute($params); $total = (int) $totalStmt->fetchColumn(); $paging = pagination($total, $page);
-    $fileStmt = db()->prepare("SELECT f.* FROM files f WHERE {$where} ORDER BY f.name ASC LIMIT :limit OFFSET :offset");
-    foreach ($params as $key => $value) $fileStmt->bindValue($key, $value);
-    $fileStmt->bindValue(':limit', $paging['per_page'], PDO::PARAM_INT); $fileStmt->bindValue(':offset', $paging['offset'], PDO::PARAM_INT); $fileStmt->execute(); $files = $fileStmt->fetchAll();
-    audit('inventory.disk.view', 'disk', $id, ['query' => $query]);
+    $path = explorerPath((string)($_GET['path'] ?? ''));
+    $files = []; $total = (int)$disk['file_count']; $paging = pagination(0, 1); $entries = [];
+    if ($query !== '') {
+        $page = pageNumber(); $where = 'f.disk_id=:id AND f.is_deleted=0'; $params = [':id' => $id];
+        $where .= ' AND (f.name LIKE :query ESCAPE "\\\\" OR f.path LIKE :query ESCAPE "\\\\")'; $params[':query'] = sqlLike($query);
+        $totalStmt = db()->prepare("SELECT COUNT(*) FROM files f WHERE {$where}"); $totalStmt->execute($params); $total = (int) $totalStmt->fetchColumn(); $paging = pagination($total, $page);
+        $fileStmt = db()->prepare("SELECT f.* FROM files f WHERE {$where} ORDER BY f.name ASC LIMIT :limit OFFSET :offset");
+        foreach ($params as $key => $value) $fileStmt->bindValue($key, $value);
+        $fileStmt->bindValue(':limit', $paging['per_page'], PDO::PARAM_INT); $fileStmt->bindValue(':offset', $paging['offset'], PDO::PARAM_INT); $fileStmt->execute(); $files = $fileStmt->fetchAll();
+    } else {
+        $entries = explorerEntries($id, $path);
+    }
+    audit('inventory.disk.view', 'disk', $id, ['query' => $query, 'path' => $path]);
 
     $managerControls = '';
     if (canAccessDisk($user, $id, true)) {
@@ -227,8 +234,25 @@ function diskPage(): never
         $partitionPanel = '<section class="panel"><div class="panel-heading"><div><p class="eyebrow">ESTRUTURA FÍSICA</p><h2>Partições detectadas</h2></div></div><div class="table-wrap"><table><thead><tr><th>Partição</th><th>Rótulo</th><th>Sistema</th><th>Capacidade</th><th>Arquivos</th><th>Status</th><th>Última indexação</th><th>Agente</th></tr></thead><tbody>' . $partitionRows . '</tbody></table></div></section>';
     }
 
-    $content = '<section class="volume-hero"><a class="back-link" href="' . h(url('disks')) . '">← Volumes</a><div class="volume-title"><div class="disk-symbol large">◉</div><div><div class="title-line"><h2>' . h($disk['label'] ?: 'Volume sem rótulo') . '</h2>' . statusBadge($disk['status']) . '</div><p>' . h($disk['model'] ?: 'Modelo não informado') . ' · Serial: ' . h($disk['serial'] ?: 'não informado') . '</p></div></div><div class="volume-metrics"><span><b>' . number_format($total, 0, ',', '.') . '</b> arquivos</span><span><b>' . h(formatBytes((int)$disk['indexed_size'])) . '</b> no índice</span><span><b>' . h(formatBytes((int)$disk['capacity'])) . '</b> capacidade</span></div></section>'
-        . $partitionPanel . $managerControls . $accessControls . $dangerControls . '<section class="panel"><div class="panel-heading"><div><p class="eyebrow">CONTEÚDO INDEXADO</p><h2>Arquivos</h2></div><form class="inline-search" method="get" action="' . h(basePath()) . '/"><input type="hidden" name="r" value="disk"><input type="hidden" name="id" value="' . $id . '"><input name="q" value="' . h($query) . '" placeholder="Buscar neste volume"><button class="button secondary">Buscar</button></form></div>' . filesTable($files) . paginationLinks('disk', $paging['page'], $paging['pages'], ['id' => $id, 'q' => $query]) . '</section>';
+    $parentPath = $path === '' ? '' : implode('/', array_slice(explode('/', $path), 0, -1));
+    $clearSearch = '<a class="text-link" href="' . h(url('disk', ['id'=>$id,'path'=>$path])) . '">Voltar ao explorador</a>';
+    if ($query !== '') {
+        $browserContent = '<section class="panel explorer-panel"><div class="panel-heading"><div><p class="eyebrow">RESULTADOS NO VOLUME</p><h2>Busca por “' . h($query) . '” <small>(' . number_format($total, 0, ',', '.') . ')</small></h2></div>' . $clearSearch . '</div>' . filesTable($files) . paginationLinks('disk', $paging['page'], $paging['pages'], ['id'=>$id,'q'=>$query,'path'=>$path]) . '</section>';
+    } else {
+        $up = $path === '' ? '<span class="explorer-up disabled">↑ Subir</span>' : '<a class="explorer-up" href="' . h(url('disk', ['id'=>$id,'path'=>$parentPath])) . '">↑ Subir</a>';
+        $browserContent = '<section class="panel explorer-panel"><div class="explorer-heading"><div><p class="eyebrow">CONTEÚDO INDEXADO</p><h2>Explorador de arquivos</h2></div><span class="explorer-count">' . number_format(count($entries), 0, ',', '.') . ' itens nesta pasta</span></div><nav class="explorer-breadcrumb" aria-label="Caminho atual">' . explorerBreadcrumbs($id, $path) . '</nav><div class="explorer-commandbar">' . $up . '<form class="explorer-search" method="get" action="' . h(basePath()) . '/"><input type="hidden" name="r" value="disk"><input type="hidden" name="id" value="' . $id . '"><input type="hidden" name="path" value="' . h($path) . '"><input name="q" value="" placeholder="Buscar neste volume"><button class="button secondary">Buscar</button></form></div>' . explorerTable($entries, $id, $path) . '</section>';
+    }
+
+    $usedBytes = (int)$usage['used_bytes']; $freeBytes = (int)$usage['free_bytes'];
+    $usageKnown = (int)$usage['partitions_with_usage'] > 0 && ($usedBytes + $freeBytes) > 0;
+    $usageTotal = $usedBytes + $freeBytes; $usagePercent = $usageKnown ? min(100, max(0, (int)round(($usedBytes * 100) / $usageTotal))) : 0;
+    $usageUpdated = !empty($usage['usage_updated_at']) ? date('d/m/Y H:i', strtotime((string)$usage['usage_updated_at'])) : null;
+    $usageSummary = $usageKnown ? '<p class="capacity-caption">Uso real de ' . number_format((int)$usage['partitions_with_usage'], 0, ',', '.') . ' filesystem(s) indexado(s)' . ($usageUpdated ? ' · atualizado em ' . h($usageUpdated) : '') . '.</p>' : '<p class="capacity-caption">A leitura de espaço real aparecerá após a próxima indexação com o cliente 1.4.0 ou posterior.</p>';
+    $donutValue = $usageKnown ? $usagePercent . '%' : '—';
+    $volumeVisualPanel = '<section class="volume-insights"><article class="capacity-card"><div class="capacity-card-head"><div><p class="eyebrow">CAPACIDADE</p><h2>Uso do volume</h2></div><span class="capacity-status">' . ($usageKnown ? 'Medição atual' : 'Aguardando medição') . '</span></div><div class="capacity-visual"><div class="capacity-donut' . ($usageKnown ? '' : ' unknown') . '" style="--used:' . $usagePercent . '%"><strong>' . h($donutValue) . '</strong><span>ocupado</span></div><div class="capacity-legend"><div><i class="legend-used"></i><span>Usado</span><b>' . ($usageKnown ? h(formatBytes($usedBytes)) : '—') . '</b></div><div><i class="legend-free"></i><span>Livre</span><b>' . ($usageKnown ? h(formatBytes($freeBytes)) : '—') . '</b></div><div><i class="legend-indexed"></i><span>Arquivos no catálogo</span><b>' . h(formatBytes((int)$disk['indexed_size'])) . '</b></div></div></div>' . $usageSummary . '</article><article class="disk-facts-card"><p class="eyebrow">INFORMAÇÕES DO DISCO</p><h2>Identificação e estado</h2><dl class="disk-facts"><div><dt>Modelo</dt><dd>' . h($disk['model'] ?: 'Não informado') . '</dd></div><div><dt>Serial</dt><dd>' . h($disk['serial'] ?: 'Não informado') . '</dd></div><div><dt>Capacidade física</dt><dd>' . h(formatBytes((int)$disk['capacity'])) . '</dd></div><div><dt>Última indexação</dt><dd>' . h($disk['last_indexed_at'] ? date('d/m/Y H:i', strtotime($disk['last_indexed_at'])) : 'Ainda não indexado') . '</dd></div><div><dt>Origem</dt><dd>' . h($disk['root_path'] ?: 'Não informada') . '</dd></div><div><dt>Filesystems</dt><dd>' . number_format(count($partitions), 0, ',', '.') . ' detectado(s)</dd></div></dl></article></section>';
+
+    $content = '<section class="volume-hero"><a class="back-link" href="' . h(url('disks')) . '">← Volumes</a><div class="volume-title"><div class="disk-symbol large">◉</div><div><div class="title-line"><h2>' . h($disk['label'] ?: 'Volume sem rótulo') . '</h2>' . statusBadge($disk['status']) . '</div><p>' . h($disk['model'] ?: 'Modelo não informado') . ' · Serial: ' . h($disk['serial'] ?: 'não informado') . '</p></div></div><div class="volume-metrics"><span><b>' . number_format((int)$disk['file_count'], 0, ',', '.') . '</b> arquivos</span><span><b>' . h(formatBytes((int)$disk['indexed_size'])) . '</b> no índice</span><span><b>' . h(formatBytes((int)$disk['capacity'])) . '</b> capacidade</span></div></section>'
+        . $volumeVisualPanel . $partitionPanel . $managerControls . $accessControls . $dangerControls . $browserContent;
     renderPage($disk['label'] ?: 'Detalhes do volume', $content, $user);
     exit;
 }
@@ -250,6 +274,87 @@ function filesTable(array $files): string
         $html .= '<tr><td>' . $thumb . '</td><td><strong>' . h($file['name']) . '</strong><small>' . h($file['mime_type'] ?: ($file['extension'] ? strtoupper($file['extension']) : 'desconhecido')) . '</small>' . $virtualOrigin . '</td>' . $volumeCell . '<td class="path">' . h($file['path']) . '</td><td>' . h(formatBytes((int)$file['size'])) . '</td><td>' . h($file['modified'] ?: '—') . '</td></tr>';
     }
     return $html . '</tbody></table></div>';
+}
+
+function explorerPath(string $path): string
+{
+    $segments = [];
+    foreach (explode('/', str_replace('\\', '/', trim($path))) as $segment) {
+        $segment = trim($segment);
+        if ($segment === '' || $segment === '.') continue;
+        if ($segment === '..') { array_pop($segments); continue; }
+        $segments[] = mb_substr($segment, 0, 255);
+    }
+    return implode('/', $segments);
+}
+
+function explorerLabel(string $segment): string
+{
+    if ($segment === 'disco-inteiro') return 'Disco inteiro';
+    if (preg_match('/^particao-(\\d+)$/', $segment, $match)) return 'Partição ' . $match[1];
+    return $segment;
+}
+
+function explorerEntries(int $diskId, string $path): array
+{
+    $prefix = '/' . ($path === '' ? '' : $path . '/');
+    $pattern = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $prefix) . '%';
+    $offset = strlen($prefix) + 1;
+    $sql = "SELECT SUBSTRING_INDEX(remainder, '/', 1) AS entry_name,
+                   MAX(CASE WHEN LOCATE('/', remainder) > 0 THEN 1 ELSE 0 END) AS is_directory,
+                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN id ELSE NULL END) AS file_id,
+                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN size ELSE NULL END) AS size,
+                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN modified ELSE NULL END) AS modified,
+                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN extension ELSE NULL END) AS extension,
+                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN mime_type ELSE NULL END) AS mime_type,
+                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN file_type ELSE NULL END) AS file_type,
+                   MAX(CASE WHEN LOCATE('/', remainder) = 0 THEN thumbnail_key ELSE NULL END) AS thumbnail_key,
+                   COUNT(*) AS item_count
+            FROM (
+                SELECT f.id,f.size,f.modified,f.extension,f.mime_type,f.file_type,f.thumbnail_key,SUBSTRING(f.path, {$offset}) AS remainder
+                FROM files f
+                WHERE f.disk_id=:disk_id AND f.is_deleted=0 AND f.path LIKE :path_prefix ESCAPE '\\\\'
+            ) AS descendants
+            WHERE remainder <> ''
+            GROUP BY entry_name
+            ORDER BY is_directory DESC, entry_name ASC
+            LIMIT 750";
+    $stmt = db()->prepare($sql);
+    $stmt->execute([':disk_id'=>$diskId, ':path_prefix'=>$pattern]);
+    return $stmt->fetchAll();
+}
+
+function explorerBreadcrumbs(int $diskId, string $path): string
+{
+    $html = '<a href="' . h(url('disk', ['id'=>$diskId])) . '">Este volume</a>';
+    $segments = $path === '' ? [] : explode('/', $path); $walk = [];
+    foreach ($segments as $segment) {
+        $walk[] = $segment;
+        $html .= '<span>›</span><a href="' . h(url('disk', ['id'=>$diskId,'path'=>implode('/', $walk)])) . '">' . h(explorerLabel($segment)) . '</a>';
+    }
+    return $html;
+}
+
+function explorerTable(array $entries, int $diskId, string $path): string
+{
+    if ($entries === []) return '<div class="explorer-empty"><span>◌</span><p>Esta pasta não contém arquivos indexados.</p></div>';
+    $rows = '';
+    foreach ($entries as $entry) {
+        $name = (string)$entry['entry_name']; $directory = (int)$entry['is_directory'] === 1;
+        $childPath = explorerPath(trim($path . '/' . $name, '/'));
+        if ($directory) {
+            $icon = '<span class="explorer-icon folder">▰</span>';
+            $nameCell = '<a class="explorer-name" href="' . h(url('disk', ['id'=>$diskId,'path'=>$childPath])) . '">' . h(explorerLabel($name)) . '</a>';
+            $type = 'Pasta'; $size = number_format((int)$entry['item_count'], 0, ',', '.') . ' itens'; $modified = '—';
+        } else {
+            $thumb = !empty($entry['thumbnail_key']) ? '<img class="explorer-thumb" src="' . h(url('thumbnail', ['id'=>(int)$entry['file_id']])) . '" alt="">' : '<span class="explorer-icon file">' . fileIcon($entry['mime_type'], $entry['extension']) . '</span>';
+            $icon = $thumb; $nameCell = '<span class="explorer-name">' . h($name) . '</span>';
+            $type = h($entry['mime_type'] ?: ($entry['extension'] ? strtoupper((string)$entry['extension']) . ' arquivo' : 'Arquivo'));
+            $size = h(formatBytes((int)$entry['size'])); $modified = h($entry['modified'] ?: '—');
+        }
+        $rows .= '<tr class="' . ($directory ? 'is-folder' : '') . '"><td class="explorer-file-cell">' . $icon . $nameCell . '</td><td>' . $modified . '</td><td>' . $type . '</td><td>' . $size . '</td></tr>';
+    }
+    return '<div class="explorer-table-wrap"><table class="explorer-table"><thead><tr><th>Nome</th><th>Modificado</th><th>Tipo</th><th>Tamanho</th></tr></thead><tbody>' . $rows . '</tbody></table></div>';
 }
 
 function selectOptions(array $options, ?string $selected): string

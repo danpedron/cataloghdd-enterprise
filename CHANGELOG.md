@@ -2,6 +2,13 @@
 
 Todas as alterações relevantes deste projeto são registradas neste arquivo.
 
+## 1.4.0 — 2026-08-12
+
+- Redesenhada a consulta de conteúdo do volume como explorador hierárquico, com breadcrumbs, navegação para pasta-pai e pastas antes dos arquivos.
+- Adicionado painel visual de volume com gráfico circular de espaço usado/livre, detalhes do dispositivo e indicadores operacionais.
+- O cliente Debian passou a medir capacidade usada e livre do filesystem montado e enviar a telemetria ao servidor de forma autenticada.
+- Adicionada migration para persistir as métricas de capacidade por partição.
+
 ## 1.3.0 — 2026-08-11
 
 - Adicionado suporte a filesystem diretamente no disco, sem tabela de partições, exibido como **Disco inteiro**.

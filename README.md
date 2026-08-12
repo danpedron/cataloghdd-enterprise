@@ -66,8 +66,8 @@ O comando mostra uma senha temporária uma única vez. Guarde-a em um cofre de s
 Construa o pacote no diretório `client/`:
 
 ```bash
-dpkg-deb --build --root-owner-group client/package cataloghdd-client_1.3.0_all.deb
-sudo apt install ./cataloghdd-client_1.3.0_all.deb
+dpkg-deb --build --root-owner-group client/package cataloghdd-client_1.4.0_all.deb
+sudo apt install ./cataloghdd-client_1.4.0_all.deb
 ```
 
 Gere um token de indexação no painel administrativo e configure o cliente com a URL da **sua** instalação.
@@ -81,7 +81,7 @@ cataloghdd inspect /dev/sdc
 sudo cataloghdd index /dev/sdc
 ```
 
-Antes de indexar, `inspect` apresenta o dispositivo detectado. A indexação monta partições elegíveis em `ro,nosuid,nodev,noexec`. Quando o filesystem está diretamente no disco, ele aparece como **Disco inteiro**. Em Btrfs, o cliente monta isoladamente o nível superior (`subvolid=5`) em modo somente leitura e preserva o ID/caminho de cada subvolume nos metadados de seus arquivos.
+Antes de indexar, `inspect` apresenta o dispositivo detectado. A indexação monta partições elegíveis em `ro,nosuid,nodev,noexec`. Quando o filesystem está diretamente no disco, ele aparece como **Disco inteiro**. Em Btrfs, o cliente monta isoladamente o nível superior (`subvolid=5`) em modo somente leitura e preserva o ID/caminho de cada subvolume nos metadados de seus arquivos. A versão 1.4.0 também coleta o espaço usado e livre de cada filesystem durante a montagem e alimenta o painel visual do volume.
 
 ## Segurança operacional
 

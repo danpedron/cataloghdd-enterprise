@@ -5,7 +5,7 @@
 Instale o pacote `.deb` com `apt`, para que as dependências, incluindo `btrfs-progs`, sejam resolvidas automaticamente.
 
 ```bash
-sudo apt install ./cataloghdd-client_1.3.0_all.deb
+sudo apt install ./cataloghdd-client_1.4.0_all.deb
 ```
 
 O pacote instala o comando `cataloghdd`, o cliente Python em `/usr/lib/cataloghdd/` e uma configuração em `/etc/cataloghdd/client.conf`. Esse arquivo contém o token de indexação e deve permanecer acessível apenas ao root.
@@ -36,7 +36,7 @@ O cliente detecta modelo, serial, WWN, capacidade e transporte. Em discos partic
 
 ## Btrfs e subvolumes
 
-Um volume Btrfs é montado temporariamente de forma isolada com `ro,nosuid,nodev,noexec,norecovery,subvolid=5`, permitindo enumerar a árvore do filesystem sem reutilizar uma montagem de escrita existente. O cliente identifica subvolumes Btrfs e armazena, nos metadados de cada arquivo, o ID e o caminho lógico do subvolume de origem.
+Um volume Btrfs é montado temporariamente de forma isolada com `ro,nosuid,nodev,noexec,norecovery,subvolid=5`, permitindo enumerar a árvore do filesystem sem reutilizar uma montagem de escrita existente. O cliente identifica subvolumes Btrfs e armazena, nos metadados de cada arquivo, o ID e o caminho lógico do subvolume de origem. Ao montar cada filesystem, ele também coleta espaço usado e livre e envia essas métricas ao painel para o gráfico de capacidade do volume.
 
 ## Compactados e miniaturas
 

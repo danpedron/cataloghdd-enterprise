@@ -33,7 +33,7 @@ from urllib.request import Request, urlopen
 from archives import ArchiveError, ArchiveLimitReached, ArchiveUnsupported, archive_format, is_archive, list_entries
 
 CONFIG_PATH = Path('/etc/cataloghdd/client.conf')
-CLIENT_VERSION = '1.3.0'
+CLIENT_VERSION = '1.4.0'
 USER_AGENT = 'CatalogHDD-Debian-Client/' + CLIENT_VERSION
 SUPPORTED_SKIP_FILESYSTEMS = {'swap', 'crypto_luks', 'lvm2_member', 'linux_raid_member'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic'}
@@ -310,6 +310,17 @@ def unmount_partition(point: Path, mounted_by_client: bool) -> None:
         raise ClientError(f'Não foi possível desmontar {point}: {result.stderr.strip()}')
 
 
+def filesystem_usage(root: Path) -> dict[str, int]:
+    """Coleta capacidade lógica do filesystem já montado, sem alterar a origem."""
+    try:
+        stats = root.statvfs()
+        total = max(0, int(stats.f_blocks) * int(stats.f_frsize))
+        free = max(0, int(stats.f_bavail) * int(stats.f_frsize))
+        return {'used_bytes': max(0, total - free), 'free_bytes': free}
+    except OSError:
+        return {}
+
+
 def btrfs_subvolume_map(root: Path) -> list[tuple[str, int]]:
     """Retorna subvolumes conhecidos a partir de uma montagem Btrfs no topo (id 5)."""
     if not shutil.which('btrfs'):
@@ -493,12 +504,13 @@ def index_disk(device: str, args: argparse.Namespace) -> int:
     batch: list[tuple[dict[str, Any], Path | None]] = []
     try:
         for partition in disk.partitions:
-            point: Path | None = None; mounted_by_client = False
+            point: Path | None = None; mounted_by_client = False; usage: dict[str, int] = {}
             try:
                 point, mounted_by_client = mount_partition(partition, mount_root)
                 if point is None:
                     if partition.error: errors.append(f'{partition.device}: {partition.error}')
                     continue
+                usage = filesystem_usage(point)
                 subvolumes = btrfs_subvolume_map(point) if (partition.filesystem or '').lower() == 'btrfs' else []
                 if subvolumes:
                     print(f'Btrfs: {len(subvolumes)} subvolume(s) detectado(s) em {partition.device}.')
@@ -531,7 +543,7 @@ def index_disk(device: str, args: argparse.Namespace) -> int:
                     except ClientError as exc:
                         counters['errors'] += 1
                         if len(errors) < 30: errors.append(str(exc))
-                states.append({'number': partition.number, 'status': partition.status})
+                states.append({'number': partition.number, 'status': partition.status, **usage})
         send_batch(client, run_id, disk_id, batch, counters)
         client.json('api-index-finish', {'run_id': run_id, 'errors_count': counters['errors'], 'error_summary': '\n'.join(errors) if errors else None, 'partitions': states})
         print(f'Indexação concluída: disco #{disk_id}; {counters["indexed"]:,} arquivos físicos; {counters["virtual"]:,} entradas virtuais; {counters["thumbnails"]:,} miniaturas; {counters["errors"]} erros; {counters["archive_warnings"]} avisos de compactados.')
