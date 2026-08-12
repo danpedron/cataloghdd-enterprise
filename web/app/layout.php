@@ -31,7 +31,7 @@ function renderPage(string $title, string $content, ?array $user = null, bool $m
 
     echo '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         . '<meta name="robots" content="noindex,nofollow"><title>' . $safeTitle . ' · CatalogHDD</title>'
-        . '<link rel="stylesheet" href="' . $base . '/assets/app.css"><script defer src="' . $base . '/assets/app.js"></script></head>'
+        . '<link rel="stylesheet" href="' . $base . '/assets/app.css?v=20260812-2"><script defer src="' . $base . '/assets/app.js"></script></head>'
         . '<body class="' . ($minimal ? 'minimal' : 'application') . '">' . $nav
         . '<main class="main"><header class="topbar"><div><p class="eyebrow">CATALOGADOR DE MÍDIAS</p><h1>' . $safeTitle . '</h1></div>'
         . (!$minimal && $user ? '<a class="profile" href="' . h(url('profile')) . '">' . h($user['username']) . '<span>›</span></a>' : '')

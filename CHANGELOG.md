@@ -8,6 +8,8 @@ Todas as alterações relevantes deste projeto são registradas neste arquivo.
 - Adicionado painel visual de volume com gráfico circular de espaço usado/livre, detalhes do dispositivo e indicadores operacionais.
 - O cliente Debian passou a medir capacidade usada e livre do filesystem montado e enviar a telemetria ao servidor de forma autenticada.
 - Adicionada migration para persistir as métricas de capacidade por partição.
+- Removido o atributo de estilo inline do gráfico para cumprir CSP estrita sem `unsafe-inline` ou nonce adicional.
+- Refinado o explorador para um workspace desktop com barra lateral contextual, ícones CSS, barra de localização e controles de navegação.
 
 ## 1.3.0 — 2026-08-11
 
