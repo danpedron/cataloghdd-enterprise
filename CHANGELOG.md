@@ -11,6 +11,7 @@ Todas as alterações relevantes deste projeto são registradas neste arquivo.
 - Removido o atributo de estilo inline do gráfico para cumprir CSP estrita sem `unsafe-inline` ou nonce adicional.
 - Refinado o explorador para um workspace desktop com barra lateral contextual, ícones CSS, barra de localização e controles de navegação.
 - Materializado o índice de diretórios do explorador para listar entradas diretas por chave indexada, evitando varredura de todos os descendentes em pastas grandes.
+- Persistidos contadores de arquivos e tamanho por volume/partição para eliminar agregações completas durante a abertura de detalhes.
 
 ## 1.3.0 — 2026-08-11
 

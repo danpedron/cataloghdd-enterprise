@@ -183,6 +183,33 @@ function apiSyncBrowserEntries(PDOStatement $directoryStmt, PDOStatement $fileEn
     $fileEntryStmt->execute([':disk_id'=>$diskId, ':partition_id'=>$partitionId, ':parent_hash'=>hash('sha256', $parentPath), ':name'=>$segments[$last], ':file_id'=>$fileId]);
 }
 
+function apiAccumulatePartitionDelta(array &$deltas, ?int $partitionId, int $countDelta, int $sizeDelta): void
+{
+    if ($partitionId === null) return;
+    if (!isset($deltas[$partitionId])) $deltas[$partitionId] = ['count'=>0, 'size'=>0];
+    $deltas[$partitionId]['count'] += $countDelta; $deltas[$partitionId]['size'] += $sizeDelta;
+}
+
+function apiApplyInventoryCounters(PDO $pdo, int $diskId, int $diskCountDelta, int $diskSizeDelta, array $partitionDeltas): void
+{
+    if ($diskCountDelta !== 0 || $diskSizeDelta !== 0) {
+        $pdo->prepare('UPDATE disks SET indexed_file_count=GREATEST(0,indexed_file_count+:count_delta),indexed_size_bytes=GREATEST(0,indexed_size_bytes+:size_delta) WHERE id=:disk_id')
+            ->execute([':count_delta'=>$diskCountDelta, ':size_delta'=>$diskSizeDelta, ':disk_id'=>$diskId]);
+    }
+    $partitionStmt = $pdo->prepare('UPDATE disk_partitions SET indexed_file_count=GREATEST(0,indexed_file_count+:count_delta),indexed_size_bytes=GREATEST(0,indexed_size_bytes+:size_delta) WHERE id=:partition_id');
+    foreach ($partitionDeltas as $partitionId => $delta) {
+        if ($delta['count'] !== 0 || $delta['size'] !== 0) $partitionStmt->execute([':count_delta'=>$delta['count'], ':size_delta'=>$delta['size'], ':partition_id'=>$partitionId]);
+    }
+}
+
+function apiRebuildInventoryCounters(PDO $pdo, int $diskId): void
+{
+    $pdo->prepare('UPDATE disks d LEFT JOIN (SELECT disk_id,COUNT(*) AS file_count,COALESCE(SUM(size),0) AS size_bytes FROM files WHERE disk_id=:source_disk AND is_deleted=0 GROUP BY disk_id) totals ON totals.disk_id=d.id SET d.indexed_file_count=COALESCE(totals.file_count,0),d.indexed_size_bytes=COALESCE(totals.size_bytes,0) WHERE d.id=:target_disk')
+        ->execute([':source_disk'=>$diskId, ':target_disk'=>$diskId]);
+    $pdo->prepare('UPDATE disk_partitions p LEFT JOIN (SELECT partition_id,COUNT(*) AS file_count,COALESCE(SUM(size),0) AS size_bytes FROM files WHERE disk_id=:source_disk AND partition_id IS NOT NULL AND is_deleted=0 GROUP BY partition_id) totals ON totals.partition_id=p.id SET p.indexed_file_count=COALESCE(totals.file_count,0),p.indexed_size_bytes=COALESCE(totals.size_bytes,0) WHERE p.disk_id=:target_disk')
+        ->execute([':source_disk'=>$diskId, ':target_disk'=>$diskId]);
+}
+
 function apiBatch(): never
 {
     $user = apiUser(); $data = apiBody(); $runId = (int)($data['run_id'] ?? 0); $records = $data['files'] ?? null;
@@ -192,7 +219,8 @@ function apiBatch(): never
     $directoryStmt = $pdo->prepare('INSERT INTO file_browser_entries (disk_id,partition_id,parent_hash,name,is_directory,last_seen_at,is_deleted) VALUES (:disk_id,:partition_id,:parent_hash,:name,1,NOW(),0) ON DUPLICATE KEY UPDATE partition_id=VALUES(partition_id),last_seen_at=NOW(),is_deleted=0');
     $fileEntryStmt = $pdo->prepare('INSERT INTO file_browser_entries (disk_id,partition_id,parent_hash,name,is_directory,file_id,last_seen_at,is_deleted) VALUES (:disk_id,:partition_id,:parent_hash,:name,0,:file_id,NOW(),0) ON DUPLICATE KEY UPDATE partition_id=VALUES(partition_id),file_id=VALUES(file_id),last_seen_at=NOW(),is_deleted=0');
     $partitionLookup = $pdo->prepare('SELECT id FROM disk_partitions WHERE disk_id=:disk_id AND partition_number=:number LIMIT 1');
-    $seenDirectories = [];
+    $existingLookup = $pdo->prepare('SELECT partition_id,size,is_deleted FROM files WHERE disk_id=:disk_id AND path_hash=:path_hash LIMIT 1');
+    $seenDirectories = []; $diskCountDelta = 0; $diskSizeDelta = 0; $partitionDeltas = [];
     try {
         foreach ($records as $record) {
             if (!is_array($record)) continue;
@@ -206,11 +234,21 @@ function apiBatch(): never
             $size = isset($record['size']) && is_numeric($record['size']) ? max(0, (int)$record['size']) : 0; $modified = apiCleanString($record['modified'] ?? null, 19);
             $thumbnail = isset($record['thumbnail_key']) && preg_match('/^[a-f0-9]{64}$/', (string)$record['thumbnail_key']) ? (string)$record['thumbnail_key'] : null;
             $metadata = $record['metadata'] ?? []; if (!is_array($metadata)) $metadata = [];
+            $existingLookup->execute([':disk_id'=>$run['disk_id'], ':path_hash'=>$hash]); $existing = $existingLookup->fetch();
+            if (!$existing || (int)$existing['is_deleted'] === 1) {
+                $diskCountDelta++; $diskSizeDelta += $size; apiAccumulatePartitionDelta($partitionDeltas, $partitionId, 1, $size);
+            } else {
+                $previousSize = (int)$existing['size']; $previousPartitionId = $existing['partition_id'] === null ? null : (int)$existing['partition_id'];
+                $diskSizeDelta += $size - $previousSize;
+                apiAccumulatePartitionDelta($partitionDeltas, $previousPartitionId, -1, -$previousSize);
+                apiAccumulatePartitionDelta($partitionDeltas, $partitionId, 1, $size);
+            }
             $fileStmt->execute([':disk_id'=>$run['disk_id'], ':partition_id'=>$partitionId, ':path'=>$path, ':path_hash'=>$hash, ':name'=>$name, ':size'=>$size, ':modified'=>$modified, ':extension'=>$extension ?: null, ':mime_type'=>$mime, ':file_type'=>$type, ':thumbnail_key'=>$thumbnail, ':metadata_json'=>json_encode($metadata, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);
             $fileId = (int)$pdo->lastInsertId();
             apiSyncBrowserEntries($directoryStmt, $fileEntryStmt, (int)$run['disk_id'], $partitionId, $fileId, $path, $seenDirectories);
             $accepted++;
         }
+        apiApplyInventoryCounters($pdo, (int)$run['disk_id'], $diskCountDelta, $diskSizeDelta, $partitionDeltas);
         $pdo->prepare('UPDATE index_runs SET files_discovered=files_discovered+:discovered,files_indexed=files_indexed+:indexed WHERE id=:id')->execute([':discovered'=>$accepted, ':indexed'=>$accepted, ':id'=>$runId]);
         $pdo->commit(); apiJson(200, ['accepted'=>$accepted]);
     } catch (Throwable $e) {
@@ -276,10 +314,16 @@ function apiFinish(): never
     $partitionStates = isset($data['partitions']) && is_array($data['partitions']) ? $data['partitions'] : [];
     $status = $errors > 0 ? 'completed_with_errors' : 'completed'; $pdo = db(); $pdo->beginTransaction();
     try {
+        $removedStmt = $pdo->prepare('SELECT partition_id,COUNT(*) AS file_count,COALESCE(SUM(size),0) AS size_bytes FROM files WHERE disk_id=:disk_id AND is_deleted=0 AND last_seen_at IS NOT NULL AND last_seen_at < :started_at GROUP BY partition_id');
+        $removedStmt->execute([':disk_id'=>$run['disk_id'], ':started_at'=>$run['started_at']]); $removedRows = $removedStmt->fetchAll();
+        $removedCount = 0; $removedSize = 0; $removedPartitions = [];
+        foreach ($removedRows as $removed) { $count = (int)$removed['file_count']; $size = (int)$removed['size_bytes']; $removedCount += $count; $removedSize += $size; apiAccumulatePartitionDelta($removedPartitions, $removed['partition_id'] === null ? null : (int)$removed['partition_id'], -$count, -$size); }
         $pdo->prepare('UPDATE files SET is_deleted=1 WHERE disk_id=:disk_id AND last_seen_at IS NOT NULL AND last_seen_at < :started_at')
             ->execute([':disk_id'=>$run['disk_id'], ':started_at'=>$run['started_at']]);
+        apiApplyInventoryCounters($pdo, (int)$run['disk_id'], -$removedCount, -$removedSize, $removedPartitions);
         $pdo->prepare('UPDATE file_browser_entries SET is_deleted=1 WHERE disk_id=:disk_id AND last_seen_at IS NOT NULL AND last_seen_at < :started_at')
             ->execute([':disk_id'=>$run['disk_id'], ':started_at'=>$run['started_at']]);
+        apiRebuildInventoryCounters($pdo, (int)$run['disk_id']);
         $partStmt = $pdo->prepare('UPDATE disk_partitions SET status=:status,last_indexed_at=CASE WHEN :indexed=1 THEN NOW() ELSE last_indexed_at END,last_seen_at=NOW(),used_bytes=COALESCE(:used_bytes,used_bytes),free_bytes=COALESCE(:free_bytes,free_bytes),usage_updated_at=CASE WHEN :has_usage=1 THEN NOW() ELSE usage_updated_at END WHERE disk_id=:disk_id AND partition_number=:number');
         foreach ($partitionStates as $part) {
             if (!is_array($part) || !isset($part['number']) || !is_numeric($part['number'])) continue;
