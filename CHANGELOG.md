@@ -2,6 +2,10 @@
 
 Todas as alterações relevantes deste projeto são registradas neste arquivo.
 
+## 1.4.2 — 2026-08-13
+
+- Adicionado restaurador PHP completo do banco, com validação de todas as tabelas em InnoDB e `ROW_FORMAT=COMPRESSED`.
+
 ## 1.4.1 — 2026-08-12
 
 - Corrigida a geração de miniaturas para PNG/GIF em paleta com transparência, eliminando avisos do Pillow sem descartar o canal alfa antes da composição em JPEG.

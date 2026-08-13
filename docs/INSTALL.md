@@ -94,3 +94,36 @@ mariadb-dump --single-transaction --routines --events catalog_hdd | gzip -9 > ca
 ```
 
 Não execute migrations de rollback sem uma estratégia validada de restauração; as migrations atuais são orientadas para avanço de schema.
+
+## Reconstrução completa do banco
+
+O restaurador `web/bin/rebuild_database.php` recria todo o schema do CatalogHDD, incluindo usuários, sessões, tokens, discos, partições, arquivos, metadados, compactados, índice do explorador e preferências. Todas as tabelas de aplicação são criadas em **InnoDB** com `ROW_FORMAT=COMPRESSED` e `KEY_BLOCK_SIZE=8`.
+
+Para um banco removido ou ainda inexistente, execute como root no servidor. A conta administrativa local do MariaDB será usada apenas para criar e estruturar o banco; a aplicação continua usando a conta definida no arquivo de ambiente.
+
+```bash
+cd /opt/cataloghdd
+sudo php web/bin/rebuild_database.php \
+  --env=/etc/cataloghdd/catalog.env \
+  --create-database \
+  --admin-dsn='mysql:unix_socket=/run/mysqld/mysqld.sock;charset=utf8mb4' \
+  --admin-user=root
+```
+
+O utilitário não apaga tabelas existentes por padrão. Caso seja realmente necessário apagar o schema antes de reconstruí-lo, as duas confirmações devem ser informadas explicitamente:
+
+```bash
+sudo php web/bin/rebuild_database.php \
+  --env=/etc/cataloghdd/catalog.env \
+  --create-database --reset --confirm-reset \
+  --admin-dsn='mysql:unix_socket=/run/mysqld/mysqld.sock;charset=utf8mb4' \
+  --admin-user=root
+```
+
+Após uma reconstrução limpa, crie o primeiro administrador e guarde a senha temporária mostrada pelo comando. O primeiro login exige alteração de senha.
+
+```bash
+sudo -u www-data php web/bin/create_admin.php admin
+```
+
+O restaurador falha se alguma tabela não for criada em InnoDB ou se o servidor não aplicar o formato `Compressed`; isso evita uma restauração silenciosamente sem compactação.
