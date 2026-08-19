@@ -7,6 +7,7 @@ Todas as alterações relevantes deste projeto são registradas neste arquivo.
 - Adicionado restaurador PHP completo do banco, com validação de todas as tabelas em InnoDB e `ROW_FORMAT=COMPRESSED`.
 - Corrigida a coleta de espaço usado/livre no cliente Debian para usar `os.statvfs`, evitando interrupção da indexação em volumes montados.
 - Restauradas no schema as colunas de observação e risco operacional de volumes, eliminando o erro 500 ao salvar alterações administrativas.
+- Adicionada navegação assíncrona no explorador de arquivos, preservando a posição de rolagem e o histórico ao abrir pastas.
 
 ## 1.4.1 — 2026-08-12
 
