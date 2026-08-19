@@ -33,7 +33,7 @@ from urllib.request import Request, urlopen
 from archives import ArchiveError, ArchiveLimitReached, ArchiveUnsupported, archive_format, is_archive, list_entries
 
 CONFIG_PATH = Path('/etc/cataloghdd/client.conf')
-CLIENT_VERSION = '1.4.1'
+CLIENT_VERSION = '1.4.2'
 USER_AGENT = 'CatalogHDD-Debian-Client/' + CLIENT_VERSION
 SUPPORTED_SKIP_FILESYSTEMS = {'swap', 'crypto_luks', 'lvm2_member', 'linux_raid_member'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic'}
@@ -313,7 +313,7 @@ def unmount_partition(point: Path, mounted_by_client: bool) -> None:
 def filesystem_usage(root: Path) -> dict[str, int]:
     """Coleta capacidade lógica do filesystem já montado, sem alterar a origem."""
     try:
-        stats = root.statvfs()
+        stats = os.statvfs(root)
         total = max(0, int(stats.f_blocks) * int(stats.f_frsize))
         free = max(0, int(stats.f_bavail) * int(stats.f_frsize))
         return {'used_bytes': max(0, total - free), 'free_bytes': free}

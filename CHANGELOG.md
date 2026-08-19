@@ -5,6 +5,7 @@ Todas as alterações relevantes deste projeto são registradas neste arquivo.
 ## 1.4.2 — 2026-08-13
 
 - Adicionado restaurador PHP completo do banco, com validação de todas as tabelas em InnoDB e `ROW_FORMAT=COMPRESSED`.
+- Corrigida a coleta de espaço usado/livre no cliente Debian para usar `os.statvfs`, evitando interrupção da indexação em volumes montados.
 
 ## 1.4.1 — 2026-08-12
 
