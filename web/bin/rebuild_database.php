@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS disks (
     filesystem VARCHAR(64) NULL,
     status ENUM('active','archived','missing','maintenance') NOT NULL DEFAULT 'active',
     is_protected TINYINT(1) NOT NULL DEFAULT 0,
+    observation TEXT NULL,
+    risco TEXT NULL,
     last_indexed_at DATETIME NULL,
     last_seen_at DATETIME NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
