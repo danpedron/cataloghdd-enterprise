@@ -1,0 +1,35 @@
+# Ajuste os caminhos de log conforme o host antes de instalar em /etc/logrotate.d/.
+# Mantém a retenção curta e reabre os arquivos pelo Nginx após a rotação.
+
+/var/log/nginx/cataloghdd/catalog-enterprise-access.log /var/log/nginx/cataloghdd/catalog-enterprise-error.log {
+    daily
+    rotate 14
+    maxsize 20M
+    missingok
+    notifempty
+    compress
+    dateext
+    dateformat -%Y%m%d
+    # Necessário quando o diretório é gravável pelo grupo de logs.
+    su www-data adm
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        /usr/sbin/nginx -s reopen >/dev/null 2>&1 || true
+    endscript
+}
+
+# Exemplo de log de integração sem daemon de reopen: copytruncate evita
+# depender do processo gravador, mas deve ser usado somente para logs.
+/var/log/xiaomi.log {
+    weekly
+    rotate 8
+    maxsize 20M
+    missingok
+    notifempty
+    compress
+    dateext
+    dateformat -%Y%m%d
+    copytruncate
+    create 0640 root adm
+}

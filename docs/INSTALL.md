@@ -127,3 +127,9 @@ sudo -u www-data php web/bin/create_admin.php admin
 ```
 
 O restaurador falha se alguma tabela não for criada em InnoDB ou se o servidor não aplicar o formato `Compressed`; isso evita uma restauração silenciosamente sem compactação.
+
+## Operação em VPS com pouco espaço
+
+O banco deve permanecer em armazenamento local confiável. Não use um arquivo SQLite sobre um mount remoto/FUSE como banco primário da aplicação. Use o Google Drive para cópias de segurança compactadas e para arquivamento de exports, mantendo MariaDB no volume local ou em um volume de bloco adicional.
+
+O modelo `ops/logrotate/cataloghdd-storage.example` define retenção curta, compactação e reabertura segura dos logs de acesso/erro. Antes de instalá-lo em `/etc/logrotate.d/`, ajuste os caminhos de log do host. Em servidores com coleta de logs muito verbosa, acompanhe periodicamente `df -h`, `du -sh /var/log` e o uso por tabela em `information_schema.tables`.
