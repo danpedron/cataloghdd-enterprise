@@ -19,17 +19,5 @@
     endscript
 }
 
-# Exemplo de log de integração sem daemon de reopen: copytruncate evita
-# depender do processo gravador, mas deve ser usado somente para logs.
-/var/log/xiaomi.log {
-    weekly
-    rotate 8
-    maxsize 20M
-    missingok
-    notifempty
-    compress
-    dateext
-    dateformat -%Y%m%d
-    copytruncate
-    create 0640 root adm
-}
+# Logs recebidos por syslog-ng, rsyslog ou outro coletor central devem ser
+# configurados na regra do próprio coletor; não os duplique neste arquivo.

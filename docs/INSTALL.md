@@ -133,3 +133,9 @@ O restaurador falha se alguma tabela não for criada em InnoDB ou se o servidor 
 O banco deve permanecer em armazenamento local confiável. Não use um arquivo SQLite sobre um mount remoto/FUSE como banco primário da aplicação. Use o Google Drive para cópias de segurança compactadas e para arquivamento de exports, mantendo MariaDB no volume local ou em um volume de bloco adicional.
 
 O modelo `ops/logrotate/cataloghdd-storage.example` define retenção curta, compactação e reabertura segura dos logs de acesso/erro. Antes de instalá-lo em `/etc/logrotate.d/`, ajuste os caminhos de log do host. Em servidores com coleta de logs muito verbosa, acompanhe periodicamente `df -h`, `du -sh /var/log` e o uso por tabela em `information_schema.tables`.
+
+### Política global de logs e journal
+
+Em VPS pequenas, a retenção precisa ser proporcional ao disco disponível. O modelo `ops/logrotate/vps-low-storage.example` ilustra regras de rotação diária, compactação, limite por tamanho e expiração por idade para logs de serviços. Garanta que **cada arquivo de log seja controlado por uma única regra**; sobrepor padrões em arquivos distintos faz o `logrotate` falhar e interrompe a rotação automática.
+
+O modelo `ops/journald/99-storage-limits.conf.example` limita o journal persistente a 128 MiB, reserva 1 GiB livre no volume, divide os arquivos em unidades menores e conserva no máximo 14 dias. Instale-o como um drop-in, execute `systemctl restart systemd-journald` e valide com `journalctl --disk-usage`. Ajuste esses valores à capacidade do servidor e às obrigações de auditoria aplicáveis.

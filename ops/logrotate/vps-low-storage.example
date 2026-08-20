@@ -1,0 +1,40 @@
+# Modelo para /etc/logrotate.d/vps-low-storage.
+# Antes de ativar, ajuste somente caminhos que NÃO estejam cobertos por
+# outra regra. Nunca deixe dois arquivos de logrotate gerenciarem o mesmo log.
+
+# Logs de aplicações sem suporte a reopen: a cópia e o truncamento preservam
+# o descritor de arquivo aberto, com uma janela mínima de perda durante a cópia.
+/var/log/application/*.log {
+    daily
+    rotate 14
+    maxsize 20M
+    maxage 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d
+    copytruncate
+    create 0640 root adm
+}
+
+# Logs de serviços que possam receber SIGHUP para reabrir seus arquivos.
+# Prefira este formato ao copytruncate quando houver suporte no serviço.
+/var/log/service/*.log {
+    daily
+    rotate 14
+    maxsize 20M
+    maxage 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d
+    create 0640 root adm
+    sharedscripts
+    postrotate
+        /usr/bin/systemctl kill -s HUP service-name.service >/dev/null 2>&1 || true
+    endscript
+}

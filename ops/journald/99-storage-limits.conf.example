@@ -1,0 +1,12 @@
+# Instale como /etc/systemd/journald.conf.d/99-storage-limits.conf.
+# Para VPS pequenas, mantém duas semanas de histórico e impede crescimento ilimitado.
+[Journal]
+Storage=persistent
+Compress=yes
+SystemMaxUse=128M
+SystemKeepFree=1G
+SystemMaxFileSize=16M
+SystemMaxFiles=8
+MaxRetentionSec=14day
+RuntimeMaxUse=64M
+RuntimeKeepFree=128M
